@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import re
@@ -7,11 +8,24 @@ import time
 
 import openpyxl
 import pandas
+from PyQt5 import QtCore, QtWidgets
+from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
 from netmiko import ConnectHandler
-from PyQt5 import QtCore, QtWidgets
 
-logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%I:%M:%S %p', level=logging.DEBUG)
+
+# logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%I:%M:%S %p', level=logging.DEBUG)
+
+
+# 重写logging.Handlerm的emit函数
+class StringLoggerHandler(logging.Handler):
+    def __init__(self, stream):
+        super().__init__()
+        self.stream = stream
+
+    def emit(self, record):
+        self.stream.write(self.format(record))
 
 
 class MyThread(threading.Thread):
@@ -57,14 +71,21 @@ class TerminalClient:
         try:
             self.conn = ConnectHandler(**self.dev)
         except Exception as e:
-            logging.debug('登录失败:')
+            logging.debug(f'[{self.hostname}_{self.ip}] 登录失败:{e}')
 
     def send_command(self, command):
         self.login()
         if self.conn is None:
             return False
-        self.conn.send_command(command_string=command, read_timeout=10)
-        return True
+        try:
+            self.conn.send_command(command_string=command, read_timeout=10)
+            flag = True
+        except Exception as e:
+            logging.debug(f'[{self.hostname}_{self.ip}] 输入命令获取信息异常，异常信息为：{e}')
+            flag = False
+        finally:
+            self.conn.colse()
+        return flag
 
 
 class Test_class:
@@ -94,8 +115,10 @@ class Test_class:
 
 
 class Ui_MainWindow(QtWidgets.QWidget):
+    signal_textEide_upgrade = pyqtSignal(str)
 
     def setupUi(self, MainWindow):
+        self.stream = io.StringIO()
         self.database = None
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(800, 600)
@@ -149,6 +172,7 @@ class Ui_MainWindow(QtWidgets.QWidget):
 
         self.toolButton.clicked.connect(self.load_config_xlxs)
         self.pushButton.clicked.connect(self.collect_mac_address)
+        self.signal_textEide_upgrade.connect(self.textEdit_upgrade)
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
@@ -158,34 +182,70 @@ class Ui_MainWindow(QtWidgets.QWidget):
         self.lineEdit.setPlaceholderText(_translate("MainWindow", "请选择账号密码表文件"))
         self.lineEdit_2.setPlaceholderText(_translate("MainWindow", "请输入MAC地址：xxxx-xxxx-xxxx"))
 
+    # 加载用户密码xlsx文件，将对应数据加入到database中
     def load_config_xlxs(self):
+        # 弹出对话框，选择文件路径
         filename, _ = QFileDialog.getOpenFileName(caption='请选择配置文件', filter='Excel files (*.xlsx)')
+        # 判断文件路径为空则终止函数
         if filename == '': return
+        # 将获取路径转换为windows格式路径
         windows_path = os.path.normpath(filename).replace('/', '\\')
         _, file_ext = os.path.splitext(windows_path)
+        # 将路径文本设置到lineEdit文本框
         self.lineEdit.setText(windows_path)
+        # 尝试打开xlsx文件，打开失败弹出错误对话框并终止函数
         try:
             workbook = openpyxl.load_workbook(filename)
         except:
             QMessageBox.about(ui, "错误", '账号密码表文件打开错误')
             return
+        # 获取excel文件工作簿的第一个工作表
         sheet = workbook.worksheets[0]
+        # 创建database为pandas.DataFrame数据类型
         self.database = pandas.DataFrame(columns=['hostname', 'ip', 'protocol', 'manufacturer', 'username', 'password',
                                                   'password_enable', 'flag', 'mac_data', 'thread', 'log_filename'])
+        # 循环每行，将数据导入database
         for row, data in enumerate(sheet.rows):
             if row == 0:
                 # 表格第一行为表头，需要跳过。
                 continue
             new_row = f'Row{row}'
+            # 将数据导入database，其中mac_data列为嵌套一个pandas.DataFrame数据类型，列索引为['mac', 'interface']
             self.database.loc[new_row] = [data[0].value, data[2].value, data[4].value, data[5].value, data[8].value,
-                                          data[9].value,
-                                          data[10].value, False, None, None, None]
-        print(self.database)
+                                          data[9].value, data[10].value, False,
+                                          pandas.DataFrame(columns=['mac', 'interface']), None, None]
+        logging.info('已导入设备信息')
 
+    # 根据database中每一行的ip等信息，创建对应登录会话子线程,启动子线程，登录设备自动输入命令收集信息，将会话日志文件信息导入database中
     def collect_mac_address(self):
         if self.database is None:
             QMessageBox.about(ui, "错误", '请输入账号密码表文件')
             return
+        # 获取mac地址输入框文本，去掉头尾空格，将格式转换为 xxxx-xxxx-xxxx
+        mac_address = self.lineEdit_2.text().strip().replace('.', '-')
+        # 判断是否为有效的mac地址
+        mac_exp = '[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}'
+        match = re.match(mac_exp, mac_address)
+        if not match:
+            QMessageBox.about('错误', '请输入正确格式的mac地址')
+            return
+        # 启动日志记录器
+        threading.Thread(target=self.load_logger, daemon=True).start()
+
+        flag = False
+        if not flag:  # 判断是否根据当前缓存文件搜索，如果勾选则跳过搜集信息函数
+            # 调用create_thread函数，根据database数据内容创建子线程
+            self.create_thread()
+            # 调用start_thread函数启动子线程
+            self.start_thread()
+            # 调用wait_thread函数，等待子线程结束，并整理相关数据
+            self.wait_thread()
+
+        # 调用search_mac函数，从database中搜索目标mac地址。
+        self.search_mac(mac_address)
+
+    # 根据设备信息创建子线程，并加入database中
+    def create_thread(self):
         for row, data in self.database.iterrows():
             ip = data.loc['ip']
             hostname = data.loc['hostname']
@@ -214,60 +274,114 @@ class Ui_MainWindow(QtWidgets.QWidget):
             password_enable = data.loc['password_enable']
             log_filename = f'./缓存文件/{hostname}_{ip}.log'
             self.database.loc[row, 'log_filename'] = log_filename
+
+            # 根据相应参数实例化TerminalClient，并创建对应子线程。
             # client_class = TerminalClient(ip, username, password, secret=password_enable, port=port,
             #                               session_log=log_filename, device_type=device_type, hostname=hostname)
             # thread = MyThread(client_class.send_command, args=(client_class,command,))
+
             client_class = Test_class
             thread = MyThread(client_class.send_command, args=(client_class, command,))
-
+            # 将子线程保存到database
             self.database.loc[row, 'thread'] = thread
 
-        # 启动子线程，并限制最多同时只能有10个线程激活
-        for thread in self.database['thread']:
+    # 启动子线程，并限制最多同时只有10个子线程激活
+    def start_thread(self):
+        for _, (hostname, ip, _, _, _, _, _, _, _, thread, _) in self.database.iterrows():
             thread.start()
+            logging.info(f'开始登录：{hostname}_{ip} 收集mac-address-table信息')
             while len(threading.enumerate()) >= 11:
                 time.sleep(0.2)
 
-        # 将线程结果返回database的"flag",线程获取mac地址表成功返回True，否则返回False
-        for row, _ in self.database.iterrows():
-            self.database.loc[row, 'thread'].join()
-            # 调用子线程的get_result()函数获取返回结果
+    # 将线程结果返回database的"flag",线程获取mac地址表成功返回True，否则返回False
+    def wait_thread(self):
+        for row, (hostname, ip, _, _, _, _, _, _, _, thread, _) in self.database.iterrows():
+            thread.join()
+            # 调用子线程的get_result()函数获取返回结果加入database，并根据结果输出日志信息
             self.database.loc[row, 'flag'] = self.database.loc[row, 'thread'].get_result()
+            if self.database.loc[row, 'flag']:
+                logging.info(f'已完成：{hostname}_{ip} mac-address-table信息收集')
+            else:
+                logging.info(f'无法完成：{hostname}_{ip} mac-address-table信息收集，登录或命令异常。')
+
+            # 调用load_logfile（）函数，将mac地址表信息导入database中，其中log_filename为登录设备会话保存的日志记录文件路径
             log_filename = self.database.loc[row, 'log_filename']
-            # 调用load_logfile（）函数，将mac地址表信息导入database
             self.load_logfile(row, log_filename)
 
+        # 调用statistic_thread函数，统计登录设备获取信息成功与否，并输出相关日志
+        self.statistic_thread()
+
+    # 统计子线程登录设备获取信息是否成功,输出相关日志信息
+    def statistic_thread(self):
+        successful = self.database.loc['flag'] == True
+        failure = self.database.loc['flag'] == False
+        failure_txt_list = ''
+        for index, (hostname, ip, _, _, _, _, _, _, _, _, _) in failure.iterrows():
+            failure_txt = f'\n{hostname}_{ip}'
+            failure_txt_list += failure_txt
+        logging.info(f'已完成信息收集，成功个数：{len(successful)}，失败个数：{len(failure)}，\n失败的设备为：{failure_txt_list}')
+
+    # 将登录设备获取的mac地址表信息导入database中
     def load_logfile(self, row, log_filename):
         with open(log_filename, 'r') as f:
             cisco_exp = '\S+\s+([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})\s+\S+\s+(\S+)'
             h3c_exp = '([0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4})\s+\S+\s+\S+\s+(\S+)\s+\S+'
             text = f.read()
+            # 正则匹配H3C格式的文本
             mac_list = re.findall(h3c_exp, text)
-            if mac_list == []:
+            if not mac_list:
+                # 正则匹配Cisco格式的文本
                 mac_list = re.findall(cisco_exp, text)
+            # 循环将列表mac和interface数据放入database。
+            for index, (mac, interface) in enumerate(mac_list):
                 # 将思科的mac地址格式转换为华三mac地址格式，同一格式为：xxxx-xxxx-xxxx
-                for index, (mac, interface) in enumerate(mac_list):
-                    mac_list[index] = (mac.replace('.', '-'), interface)
-            mac_data = pandas.DataFrame(mac_list, columns=['mac', 'interface'])
-            self.database.loc[row, 'mac_data'] = mac_data
+                self.database.loc[row, 'mac_data'].loc[index] = [mac.replace('.', '-'), interface]
 
-    def search_mac(self):
-        mac_address = self.lineEdit_2.text().rstrip()
-        mac_exp = '[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}'
-        match = re.match(mac_exp, mac_address)
-        if not match:
-            QMessageBox.about('错误', '请输入正确格式的mac地址')
-            return
+    def search_mac(self, mac_address):
+        # 从database中搜索mac地址为mac_address的数据，并将hostname、interface、mac添加到match_data列表
         match_data = []
-        for hostname, _, _, _, _, _, _, flag, mac_data, _, _ in self.database.iterrows():
-            mac_data_row = mac_data.loc[mac_data['mac'] == mac_address]
-            interface = mac_data.loc[mac_data_row, 'interface']
-            match_data.append([hostname, interface, mac_address])
-        print(match_data)
+        for _, (hostname, _, _, _, _, _, _, flag, mac_data, _, _) in self.database.iterrows():
+            # 获取符合条件的行
+            match = mac_data['mac'] == mac_address
+            if match.any:
+                mac_data_row = mac_data.loc[match]
+                for _, (mac, interface) in mac_data_row.iterrows():
+                    match_data.append([hostname, interface, mac])
+        logging.info(match_data)
+
+    # 设置日志记录器
+    def load_logger(self):
+        logger = logging.getLogger()
+        logger.setLevel(logging.DEBUG)
+        console_handler = StringLoggerHandler(ui.stream)
+        console_handler.setLevel(logging.DEBUG)
+        # formatter = logging.Formatter(
+        #     'log_start [%(thread)s] %(asctime)s - %(name)s -%(levelname)s - %(message)s log_end')
+        # console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        while True:
+            if self.stream.tell() > 0:
+                lock.acquire()
+                self.stream.seek(0)  # 移动至read_pos位置
+                log_mess = self.stream.getvalue()  # 从当前位置往后读取数据
+                self.stream.truncate()  # 删除已读取的流数据
+                lock.release()
+                self.signal_textEdit_upgrade(log_mess)
+                time.sleep(0.3)
+
+    # 设置函数链接主线程信号
+    def signal_textEdit_upgrade(self, message):
+        self.signal_textEide_upgrade.emit(message)
+
+    # 信号槽函数
+    def textEdit_upgrade(self, log_mess):
+        self.textEdit.insertPlainText(log_mess)
+        self.textEdit.moveCursor(QTextCursor.End)
 
 
 if __name__ == "__main__":
     filename = r'zsyk-oz-out.xlsx'
+    lock = threading.Lock()
     app = QtWidgets.QApplication(sys.argv)
     MainWindow = QtWidgets.QMainWindow()
     ui = Ui_MainWindow()
