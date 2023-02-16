@@ -6,7 +6,6 @@ import sys
 import threading
 import time
 import encodings.idna
-import traceback
 
 import openpyxl
 import pandas
@@ -75,17 +74,14 @@ class TerminalClient:
         except Exception as e:
             hostname_ip = self.hostname + '_' + self.ip
             logging.info(f'登录失败:{hostname_ip:<45} {e}')
-            # print(self.ip)
-            # print(self.username, type(self.username))
-            # print(self.password, type(self.password))
-            # print(self.secret, type(self.secret))
 
     def send_command(self, command):
         self.login()
         if self.conn is None:
             return False
         try:
-            self.conn.send_command(command_string=command, read_timeout=10)
+            for i in range(len(command)):
+                self.conn.send_command(command_string=command[i], read_timeout=10)
             flag = True
         except Exception as e:
             logging.info(f'错误：{self.hostname}_{self.ip} 输入命令获取信息异常，异常信息为：{e}')
@@ -94,15 +90,18 @@ class TerminalClient:
             self.conn.disconnect()
         return flag
 
+    # 由于H3C v3版本取消回显限制需要进入配置模式较为麻烦，所以定制特殊的函数自动交互下一页动作。
     def send_command_custom(self, command):
         self.login()
         if self.conn is None:
             return False
         try:
-            self.conn.write_channel(f'{command}{self.conn.RETURN}')
-            for _ in range(15):
-                time.sleep(0.2)
-                self.conn.write_channel(' ')
+            for i in range(len(command)):
+                self.conn.write_channel(f'{command[i]}{self.conn.RETURN}')
+                # 循环多次输入空格，自动下一页动作
+                for _ in range(15):
+                    time.sleep(0.2)
+                    self.conn.write_channel(' ')
             flag = True
         except Exception as e:
             logging.info(f'错误：{self.hostname}_{self.ip} 输入命令获取信息异常，异常信息为：{e}')
@@ -281,19 +280,19 @@ class Ui_MainWindow(QtWidgets.QWidget):
             if manufacturer == 'CISCO' and protocol == 'telnet':
                 device_type = 'cisco_ios_telnet'
                 port = 23
-                command = 'show mac address-table'
+                command = ['show mac address-table', 'show running-config']
             elif manufacturer == 'H3C' and protocol == 'ssh':
                 device_type = 'cisco_ios'
                 port = 22
-                command = 'show mac address-table'
+                command = ['show mac address-table', 'show running-config']
             elif manufacturer == 'H3C' and protocol == 'telnet':
                 device_type = 'hp_comware_telnet'
                 port = 23
-                command = 'display mac-address'
+                command = ['display mac-address', 'display current-configuration']
             elif manufacturer == 'H3C' and protocol == 'ssh':
                 device_type = 'hp_comware'
                 port = 22
-                command = 'display mac-address'
+                command = ['display mac-address', 'display current-configuration']
             else:
                 continue
             username = '' if data.loc['username'] is None else data.loc['username']
@@ -359,7 +358,7 @@ class Ui_MainWindow(QtWidgets.QWidget):
         successful = self.database[self.database['flag'].isin([True])]
         failure = self.database[self.database['flag'].isin([False])]
         failure_txt_list = ''
-        for index, (hostname, ip, _, _, _, _, _, _, _, _, _,_) in failure.iterrows():
+        for index, (hostname, ip, _, _, _, _, _, _, _, _, _, _) in failure.iterrows():
             failure_txt = f'\n{hostname}_{ip}'
             failure_txt_list += failure_txt
         if len(failure) == 0:
@@ -393,20 +392,27 @@ class Ui_MainWindow(QtWidgets.QWidget):
         # 从database中搜索mac地址为mac_address的数据，并将hostname、interface、mac添加到match_data列表
         match_data = []
 
-        for _, (hostname, _, _, _, _, _, _, flag, mac_data, _, _,_) in self.database.iterrows():
+        for _, (hostname, ip, _, _, _, _, _, flag, mac_data, _, _, _) in self.database.iterrows():
             # 获取符合条件的行
-            match = mac_data['mac'] == mac_address
-            if match.any:
-                mac_data_row = mac_data.loc[match]
+            match_mac = mac_data['mac'] == mac_address
+            if match_mac.any:
+                mac_data_row = mac_data.loc[match_mac]
                 for _, (mac, interface) in mac_data_row.iterrows():
-                    match_data.append([hostname, interface, mac])
+                    count = len(mac_data.loc[mac_data['interface'] == interface])
+                    match_data.append([hostname, ip, interface, mac, count])
         if not match_data:
             logging.info('没有搜索到目标mac地址')
         else:
             logging.info('-' * 30)
             logging.info(f'{" ":<16}' + f'{"设备名称":<26}{"接口":<26}{"mac地址":<18}')
-            for hostname, interface, mac in match_data:
+            for hostname, ip, interface, mac in match_data:
                 logging.info(f'{"匹配的目标：":<10}{hostname:<30}{interface:<28}{mac:<20}')
+
+    # 分析接口类型，输入缓存文件名和接口，接口mode
+    def interface_mode(self, log_filename, interface):
+        with open(log_filename, 'r') as f:
+            interface_exp = f'\ninterface {interface}'
+            text = f.read()
 
     # 设置日志记录器
     def load_logger(self):
