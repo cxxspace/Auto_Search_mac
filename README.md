@@ -1,0 +1,5 @@
+1、自动搜索mac地址所在交换机端口脚本，帮助日常网络运维中快速定位终端所在接入交换机的端口
+
+2、通过excel表格的设备信息，自动登录到设备收集mac address-table信息和running-config信息，整理成dataframe数据
+
+3、根据目标mac地址在datafreame中匹配目标，筛选出所在接入交换机的端口信息。
