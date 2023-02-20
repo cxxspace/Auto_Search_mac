@@ -5,14 +5,16 @@ import re
 import sys
 import threading
 import time
+import encodings.idna
 
-import pandas
-from PyQt5 import QtCore, QtWidgets
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, QSize, Qt, QMetaObject, QCoreApplication
 from PyQt5.QtGui import QTextCursor, QColor, QTextCharFormat
-from PyQt5.QtWidgets import QMessageBox, QFileDialog
+from PyQt5.QtWidgets import QMessageBox, QFileDialog, QWidget, QGridLayout, QToolButton, QSizePolicy, QTextEdit, \
+    QSpacerItem, QLineEdit, QPushButton, QCheckBox, QApplication, QMainWindow
 from netmiko import ConnectHandler
+from pandas import read_excel, DataFrame, isna
 
+version = 'v1.0'
 
 # logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%I:%M:%S %p', level=logging.DEBUG)
 
@@ -151,7 +153,7 @@ class TerminalClient:
 #         return True
 
 
-class Ui_MainWindow(QtWidgets.QWidget):
+class Ui_MainWindow(QWidget):
     # 设置自定义信号，用于触发槽函数更新textEide文本内容。
     signal_textEide_upgrade = pyqtSignal(str, str)
     signal_pushButton_text = pyqtSignal(str)
@@ -164,56 +166,56 @@ class Ui_MainWindow(QtWidgets.QWidget):
         self.run_flag = False
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(1000, 600)
-        self.centralwidget = QtWidgets.QWidget(MainWindow)
+        self.centralwidget = QWidget(MainWindow)
         self.centralwidget.setObjectName("centralwidget")
-        self.gridLayout = QtWidgets.QGridLayout(self.centralwidget)
+        self.gridLayout = QGridLayout(self.centralwidget)
         self.gridLayout.setObjectName("gridLayout")
-        self.toolButton = QtWidgets.QToolButton(self.centralwidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.toolButton = QToolButton(self.centralwidget)
+        sizePolicy = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.toolButton.sizePolicy().hasHeightForWidth())
         self.toolButton.setSizePolicy(sizePolicy)
-        self.toolButton.setMinimumSize(QtCore.QSize(80, 20))
-        self.toolButton.setMaximumSize(QtCore.QSize(80, 20))
-        self.toolButton.setLayoutDirection(QtCore.Qt.RightToLeft)
+        self.toolButton.setMinimumSize(QSize(80, 20))
+        self.toolButton.setMaximumSize(QSize(80, 20))
+        self.toolButton.setLayoutDirection(Qt.RightToLeft)
         self.toolButton.setObjectName("toolButton")
         self.gridLayout.addWidget(self.toolButton, 0, 4, 1, 1)
-        self.textEdit = QtWidgets.QTextEdit(self.centralwidget)
+        self.textEdit = QTextEdit(self.centralwidget)
         self.textEdit.setObjectName("textEdit")
         self.gridLayout.addWidget(self.textEdit, 1, 0, 1, 5)
-        spacerItem = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+        spacerItem = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)
         self.gridLayout.addItem(spacerItem, 2, 1, 1, 1)
-        self.lineEdit_2 = QtWidgets.QLineEdit(self.centralwidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.lineEdit_2 = QLineEdit(self.centralwidget)
+        sizePolicy = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.lineEdit_2.sizePolicy().hasHeightForWidth())
         self.lineEdit_2.setSizePolicy(sizePolicy)
-        self.lineEdit_2.setMinimumSize(QtCore.QSize(250, 0))
+        self.lineEdit_2.setMinimumSize(QSize(250, 0))
         self.lineEdit_2.setObjectName("lineEdit_2")
         self.gridLayout.addWidget(self.lineEdit_2, 2, 2, 1, 1)
-        self.pushButton = QtWidgets.QPushButton(self.centralwidget)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Maximum)
+        self.pushButton = QPushButton(self.centralwidget)
+        sizePolicy = QSizePolicy(QSizePolicy.Minimum, QSizePolicy.Maximum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.pushButton.sizePolicy().hasHeightForWidth())
         self.pushButton.setSizePolicy(sizePolicy)
-        self.pushButton.setMinimumSize(QtCore.QSize(30, 0))
-        self.pushButton.setMaximumSize(QtCore.QSize(80, 16777215))
-        self.pushButton.setLayoutDirection(QtCore.Qt.RightToLeft)
+        self.pushButton.setMinimumSize(QSize(30, 0))
+        self.pushButton.setMaximumSize(QSize(80, 16777215))
+        self.pushButton.setLayoutDirection(Qt.RightToLeft)
         self.pushButton.setObjectName("pushButton")
         self.gridLayout.addWidget(self.pushButton, 2, 4, 1, 1)
-        self.lineEdit = QtWidgets.QLineEdit(self.centralwidget)
+        self.lineEdit = QLineEdit(self.centralwidget)
         self.lineEdit.setObjectName("lineEdit")
         self.gridLayout.addWidget(self.lineEdit, 0, 0, 1, 3)
-        self.checkBox = QtWidgets.QCheckBox(self.centralwidget)
+        self.checkBox = QCheckBox(self.centralwidget)
         self.checkBox.setObjectName("checkBox")
         self.gridLayout.addWidget(self.checkBox, 2, 0, 1, 1)
         MainWindow.setCentralWidget(self.centralwidget)
 
         self.retranslateUi(MainWindow)
-        QtCore.QMetaObject.connectSlotsByName(MainWindow)
+        QMetaObject.connectSlotsByName(MainWindow)
 
         # 设置信号连接槽函数
         self.toolButton.clicked.connect(self.load_config_xlxs)
@@ -225,15 +227,15 @@ class Ui_MainWindow(QtWidgets.QWidget):
         self.set_logger()
 
     def retranslateUi(self, MainWindow):
-        _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "MAC地址搜索工具"))
+        _translate = QCoreApplication.translate
+        MainWindow.setWindowTitle(_translate("MainWindow", f"MAC地址搜索工具{version}"))
         self.toolButton.setText(_translate("MainWindow", "..."))
         self.pushButton.setText(_translate("MainWindow", "搜索"))
         self.lineEdit.setPlaceholderText(_translate("MainWindow", "请选择设备信息文件"))
         self.lineEdit_2.setPlaceholderText(_translate("MainWindow", "请输入MAC地址：xxxx-xxxx-xxxx"))
         self.checkBox.setText(_translate("MainWindow", "在当前缓存中查找"))
         self.textEdit.setReadOnly(True)
-        self.lineEdit_2.setText('f88c-2137-781c')
+        # self.lineEdit_2.setText('f88c-2137-781c')
 
     # 加载用户密码xlsx文件，将对应数据加入到database中
     def load_config_xlxs(self):
@@ -248,7 +250,7 @@ class Ui_MainWindow(QtWidgets.QWidget):
         self.lineEdit.setText(windows_path)
         # 尝试打开xlsx文件，打开失败弹出错误对话框并终止函数
         try:
-            database = pandas.read_excel(filename)
+            database = read_excel(filename)
         except:
             QMessageBox.about(ui, "错误", '账号密码表文件打开错误')
             return
@@ -260,7 +262,7 @@ class Ui_MainWindow(QtWidgets.QWidget):
                                                  '特权密码': 'password_enable'})
         # 添加'flag' 'mac_data' 'thread' 'log_filename'列数据
         self.database['flag'] = False
-        self.database['mac_data'] = self.database.apply(lambda x: pandas.DataFrame(columns=['mac', 'interface']),
+        self.database['mac_data'] = self.database.apply(lambda x: DataFrame(columns=['mac', 'interface']),
                                                         axis=1)  # 迭代赋值
         self.database['thread'] = None
         self.database['log_filename'] = None
@@ -286,6 +288,8 @@ class Ui_MainWindow(QtWidgets.QWidget):
         threading.Thread(target=self.please_wait_thread, daemon=True).start()
 
         if not self.checkBox.isChecked():  # 判断是否根据当前缓存文件搜索，如果勾选则跳过搜集信息函数
+            # 将cache_flag置为False，表示不使用缓存进行搜索。
+            self.cache_flag = False
             # 调用create_thread函数，根据database数据内容创建子线程
             self.create_thread()
             # 子线程调用start_thread函数启动子线程
@@ -297,6 +301,7 @@ class Ui_MainWindow(QtWidgets.QWidget):
             threading.Thread(target=self.wait_thread, daemon=True).start()
 
     # 根据设备信息创建子线程，并加入database中
+
     def create_thread(self):
         for row, data in self.database.iterrows():
             ip = data.loc['ip']
@@ -321,9 +326,10 @@ class Ui_MainWindow(QtWidgets.QWidget):
                 command = ['display mac-address', 'display current-configuration']
             else:
                 continue
-            username = '' if data.loc['username'] is None else data.loc['username']
+            nan = float('nan')
+            username = '' if isna(data.loc['username']) else data.loc['username']
             password = data.loc['password']
-            password_enable = '' if data.loc['password_enable'] is None else data.loc['password_enable']
+            password_enable = '' if isna(data.loc['password_enable']) else data.loc['password_enable']
             version = data.loc['version']
             # 判断缓存文件目录是否存在，不存在则新建
             log_dir = self.log_dir
@@ -332,7 +338,7 @@ class Ui_MainWindow(QtWidgets.QWidget):
             log_filename = f'{log_dir}{hostname}_{ip}.log'
 
             self.database.loc[row, 'log_filename'] = log_filename
-
+            print(username,password,password_enable)
             # 根据相应参数实例化TerminalClient，并创建对应子线程。
             client_class = TerminalClient(ip, username, password, secret=password_enable, port=port,
                                           session_log=log_filename, device_type=device_type, hostname=hostname)
@@ -341,10 +347,6 @@ class Ui_MainWindow(QtWidgets.QWidget):
                 thread = MyThread(client_class.send_command_custom, args=(command,))
             else:
                 thread = MyThread(client_class.send_command, args=(command,))
-
-            # client_class = Test_class
-            # thread = MyThread(client_class.send_command, args=(client_class, command,))
-
             # 将子线程保存到database
             self.database.loc[row, 'thread'] = thread
 
@@ -528,7 +530,7 @@ class Ui_MainWindow(QtWidgets.QWidget):
         while self.run_flag:
             self.signal_pushButton_text.emit(' 请稍等' + '.' * n)
             n += 1
-            n = 0 if n > 4 else n
+            n = 0 if n > 3 else n
             time.sleep(0.33)
         self.signal_pushButton_text.emit('搜索')
 
@@ -543,8 +545,8 @@ class Ui_MainWindow(QtWidgets.QWidget):
 
 if __name__ == "__main__":
     lock = threading.Lock()
-    app = QtWidgets.QApplication(sys.argv)
-    MainWindow = QtWidgets.QMainWindow()
+    app = QApplication(sys.argv)
+    MainWindow = QMainWindow()
     ui = Ui_MainWindow()
     ui.setupUi(MainWindow)
     MainWindow.show()
